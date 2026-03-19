@@ -53,12 +53,9 @@ final class ContentViewModel {
     // MARK: - Folder selection
     func selectFolder() {
         loadingFolderTask?.cancel()
+        
         loadingFolderTask = Task {
             mediaFilesLoading = true
-            defer {
-                mediaFilesLoading = false
-            }
-            
             let panel = NSOpenPanel()
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
@@ -69,6 +66,7 @@ final class ContentViewModel {
             
             // Start accessing the security-scoped resource
             guard response == .OK, let url = panel.url else {
+                mediaFilesLoading = false
                 return
             }
             
@@ -80,11 +78,12 @@ final class ContentViewModel {
             duplicateGroups = []
             hideDuplicatesButton = true
 
-            self.mediaFiles = []
+            mediaFiles = []
             
-            let mediaFiles = await loadMedia(from: url)
-            self.mediaFiles = mediaFiles
-            findDuplicates(mediaFiles: mediaFiles)
+            let files = try await loadMedia(from: url)
+            mediaFiles = files
+            findDuplicates(mediaFiles: files)
+            mediaFilesLoading = false
         }
     }
 
@@ -108,7 +107,7 @@ final class ContentViewModel {
     }
 
     // MARK: - Load media
-    private nonisolated func loadMedia(from folder: URL) async -> [URL] {
+    private nonisolated func loadMedia(from folder: URL) async throws -> [URL] {
         let enumerator = FileManager.default.enumerator(
             at: folder,
             includingPropertiesForKeys: nil,
@@ -121,6 +120,7 @@ final class ContentViewModel {
             if imageExtensions.contains(ext) || videoExtensions.contains(ext) {
                 files.append(fileURL)
             }
+            try Task.checkCancellation()
         }
         return files.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }

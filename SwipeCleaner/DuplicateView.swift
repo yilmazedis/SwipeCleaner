@@ -8,11 +8,17 @@
 import SwiftUI
 import AVKit
 
+@MainActor
+@Observable
+final class DuplicateViewModel {
+    @ObservationIgnored var deletedURLs: Set<URL> = []
+}
+
 struct DuplicateView: View {
     let groups: [[URL]]
     var onDelete: (URL) -> Void
 
-    @State private var deletedURLs: Set<URL> = []
+    @State var viewModel = DuplicateViewModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,14 +45,14 @@ struct DuplicateView: View {
 
             List {
                 ForEach(groups.indices, id: \.self) { index in
-                    let visibleFiles = groups[index].filter { !deletedURLs.contains($0) }
+                    let visibleFiles = groups[index].filter { !viewModel.deletedURLs.contains($0) }
                     if visibleFiles.count > 1 {
                         Section(header: Text("Group \(index + 1) — \(visibleFiles.count) copies")) {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 16) {
                                     ForEach(visibleFiles, id: \.self) { url in
                                         DuplicateThumbnailView(url: url) {
-                                            deletedURLs.insert(url)
+                                            viewModel.deletedURLs.insert(url)
                                             onDelete(url)
                                         }
                                     }
@@ -64,8 +70,10 @@ struct DuplicateView: View {
     func deleteAll() {
         for files in groups {
             for file in files {
-                onDelete(file)
-                deletedURLs.insert(file)
+                if !viewModel.deletedURLs.contains(file) {
+                    onDelete(file)
+                    viewModel.deletedURLs.insert(file)
+                }
             }
         }
     }
