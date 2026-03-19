@@ -86,7 +86,7 @@ final class ContentViewModel {
             mediaFiles = []
             
             let files = try await loadMedia(from: url)
-            let duplicates = await findDuplicates(mediaFiles: files)
+            let duplicates = try await findDuplicates(mediaFiles: files)
 
             mediaFiles = files
             duplicateGroups = duplicates
@@ -272,7 +272,7 @@ final class ContentViewModel {
         return candidate
     }
     
-    private nonisolated func findDuplicates(mediaFiles: [URL]) async -> [[URL]] {
+    private nonisolated func findDuplicates(mediaFiles: [URL]) async throws -> [[URL]] {
         var sizeMap: [UInt64: [URL]] = [:]
 
         for file in mediaFiles {
@@ -288,6 +288,8 @@ final class ContentViewModel {
                 if let hash = fileHash(for: file) {
                     hashMap[hash, default: []].append(file)
                 }
+                
+                try Task.checkCancellation()
             }
         }
         
@@ -306,6 +308,9 @@ final class ContentViewModel {
             isFaceFiltering = true
             numberOfFaceFilteredFiles = 0
             numberOfFaceCheckedFiles = 0
+            duplicateGroups = []
+            hideDuplicatesButton = true
+            
             var found: [URL] = []
             for url in mediaFiles {
                 if await hasFace(in: url) {
@@ -320,6 +325,9 @@ final class ContentViewModel {
             defer {
                 isFaceFiltering = false
             }
+            let duplicates = try await findDuplicates(mediaFiles: found)
+            duplicateGroups = duplicates
+            hideDuplicatesButton = duplicates.isEmpty
             mediaFiles = found
         }
     }
