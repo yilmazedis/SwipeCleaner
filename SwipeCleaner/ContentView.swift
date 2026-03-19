@@ -21,12 +21,14 @@ final class ContentViewModel {
     var isFaceFiltering = false
     var numberOfFaceFilteredFiles = 0
     var numberOfFaceCheckedFiles = 0
+    var numberOfFaceLoadedFiles = 0
     
     enum ActionFeedback: Equatable {
         case kept, deleted
     }
     
     @ObservationIgnored private var loadingFolderTask: Task<Void, Error>?
+    @ObservationIgnored private var faceFilterFolderTask: Task<Void, Error>?
     
     private let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"]
     private let videoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
@@ -34,6 +36,9 @@ final class ContentViewModel {
     deinit {
         loadingFolderTask?.cancel()
         loadingFolderTask = nil
+        
+        faceFilterFolderTask?.cancel()
+        faceFilterFolderTask = nil
     }
     
     // MARK: - Helpers
@@ -81,8 +86,11 @@ final class ContentViewModel {
             mediaFiles = []
             
             let files = try await loadMedia(from: url)
+            let duplicates = await findDuplicates(mediaFiles: files)
+
             mediaFiles = files
-            findDuplicates(mediaFiles: files)
+            duplicateGroups = duplicates
+            hideDuplicatesButton = duplicates.isEmpty
             mediaFilesLoading = false
         }
     }
@@ -114,15 +122,28 @@ final class ContentViewModel {
             options: [.skipsHiddenFiles]
         )
         var files: [URL] = []
+        await resetCount()
         while let fileURL = enumerator?.nextObject() as? URL {
             if fileURL.hasDirectoryPath { continue }
             let ext = fileURL.pathExtension.lowercased()
             if imageExtensions.contains(ext) || videoExtensions.contains(ext) {
                 files.append(fileURL)
+                updateCount()
             }
             try Task.checkCancellation()
         }
-        return files.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        return files
+    }
+    
+    nonisolated func updateCount() {
+        Task { @MainActor in
+            self.numberOfFaceLoadedFiles += 1
+        }
+    }
+    
+    // You can call MainActor isolated function in the nonisolated async with await
+    func resetCount() {
+        numberOfFaceLoadedFiles = 0
     }
 
     // MARK: - Key handling
@@ -250,14 +271,8 @@ final class ContentViewModel {
         } while FileManager.default.fileExists(atPath: candidate.path)
         return candidate
     }
-
-    private nonisolated func fileHash(for url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let hash = SHA256.hash(data: data)
-        return hash.compactMap { String(format: "%02x", $0) }.joined()
-    }
     
-    private nonisolated func findDuplicates(mediaFiles: [URL]) {
+    private nonisolated func findDuplicates(mediaFiles: [URL]) async -> [[URL]] {
         var sizeMap: [UInt64: [URL]] = [:]
 
         for file in mediaFiles {
@@ -276,16 +291,19 @@ final class ContentViewModel {
             }
         }
         
-        let duplicates = hashMap.values.filter { $0.count > 1 }
-        
-        Task { @MainActor in
-            duplicateGroups = duplicates
-            hideDuplicatesButton = duplicates.isEmpty
-        }
+       return hashMap.values.filter { $0.count > 1 }
+    }
+    
+    private nonisolated func fileHash(for url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
     
     func filterFaceForAllImage() {
-        Task {
+        faceFilterFolderTask?.cancel()
+        faceFilterFolderTask = Task {
+            isFaceFiltering = true
             numberOfFaceFilteredFiles = 0
             numberOfFaceCheckedFiles = 0
             var found: [URL] = []
@@ -295,9 +313,10 @@ final class ContentViewModel {
                     numberOfFaceFilteredFiles += 1
                 }
                 numberOfFaceCheckedFiles += 1
+                
+                try Task.checkCancellation()
             }
             
-            isFaceFiltering = true
             defer {
                 isFaceFiltering = false
             }
@@ -432,7 +451,7 @@ struct ContentView: View {
                     
                     if viewModel.mediaFilesLoading {
                         HStack {
-                            Text("Loading Files")
+                            Text("\(viewModel.numberOfFaceLoadedFiles): Loading Files")
                                 .monospacedDigit()
                                 .foregroundColor(.secondary)
                                 .font(.callout)
