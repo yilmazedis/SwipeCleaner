@@ -4,10 +4,21 @@ import UniformTypeIdentifiers
 import CryptoKit
 import Vision
 
+@Observable
+final class ContentViewModel {
+    @ObservationIgnored var loadingFolderTask: Task<Void, Error>?
+    
+    deinit {
+        loadingFolderTask?.cancel()
+        loadingFolderTask = nil
+    }
+}
+
 struct ContentView: View {
     @State private var folderURL: URL?
     @State private var keepFolderURL: URL?
     @State private var mediaFiles: [URL] = []
+    @State private var mediaFilesLoading = false
     @State private var currentIndex = 0
     @State private var errorMessage: String?
     @State private var actionFeedback: ActionFeedback? = nil
@@ -22,14 +33,40 @@ struct ContentView: View {
     @State private var numberOfFaceFilteredFiles = 0
     @State private var numberOfFaceCheckedFiles = 0
     
+    let viewModel = ContentViewModel()
+    
     private let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"]
     private let videoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
 
     enum ActionFeedback: Equatable {
         case kept, deleted
     }
-
+    
     var body: some View {
+        content
+            .sheet(isPresented: $showingDuplicates) {
+                DuplicateView(groups: duplicateGroups) { urlToDelete in
+                    do {
+                        try FileManager.default.trashItem(at: urlToDelete, resultingItemURL: nil)
+                        deletedCount += 1
+                        mediaFiles.removeAll { $0 == urlToDelete }
+                        if currentIndex >= mediaFiles.count {
+                            currentIndex = max(0, mediaFiles.count - 1)
+                        }
+                    } catch {
+                        errorMessage = "Could not delete \(urlToDelete.lastPathComponent): \(error.localizedDescription)"
+                    }
+                }
+            }
+            .frame(minWidth: 700, minHeight: 500)
+            .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
+                Button("OK") { errorMessage = nil }
+            } message: { message in
+                Text(message)
+            }
+    }
+    
+    var content: some View {
         VStack(spacing: 0) {
 
             // ── Top bar ──────────────────────────────────────────────────
@@ -37,7 +74,15 @@ struct ContentView: View {
                 HStack(spacing: 12) {
                     // Source folder
                     Button {
-                        selectFolder()
+                        viewModel.loadingFolderTask?.cancel()
+                        viewModel.loadingFolderTask = Task {
+                            mediaFilesLoading = true
+                            defer {
+                                mediaFilesLoading = false
+                            }
+                           
+                            await selectFolder()
+                        }
                     } label: {
                         Label(folderURL?.lastPathComponent ?? "Open Folder…", systemImage: "folder")
                             .lineLimit(1)
@@ -64,7 +109,6 @@ struct ContentView: View {
                     // Stats
                     if folderURL != nil {
                         Button {
-                            isFaceFiltering = true
                             filterFaceForAllImage()
                         } label: {
                             if isFaceFiltering {
@@ -112,6 +156,17 @@ struct ContentView: View {
                             .monospacedDigit()
                             .foregroundColor(.secondary)
                             .font(.callout)
+                    }
+                    
+                    if mediaFilesLoading {
+                        HStack {
+                            Text("Loading Files")
+                                .monospacedDigit()
+                                .foregroundColor(.secondary)
+                                .font(.callout)
+                            
+                            ProgressView()
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -233,26 +288,6 @@ struct ContentView: View {
             .padding(.vertical, 8)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        .sheet(isPresented: $showingDuplicates) {
-            DuplicateView(groups: duplicateGroups) { urlToDelete in
-                do {
-                    try FileManager.default.trashItem(at: urlToDelete, resultingItemURL: nil)
-                    deletedCount += 1
-                    mediaFiles.removeAll { $0 == urlToDelete }
-                    if currentIndex >= mediaFiles.count {
-                        currentIndex = max(0, mediaFiles.count - 1)
-                    }
-                } catch {
-                    errorMessage = "Could not delete \(urlToDelete.lastPathComponent): \(error.localizedDescription)"
-                }
-            }
-        }
-        .frame(minWidth: 700, minHeight: 500)
-        .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
-            Button("OK") { errorMessage = nil }
-        } message: { message in
-            Text(message)
-        }
     }
 
     // MARK: - Key hint view
@@ -287,22 +322,33 @@ struct ContentView: View {
     }
 
     // MARK: - Folder selection
-    private func selectFolder() {
+    private func selectFolder() async {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         // Request security-scoped access so file operations are permitted
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                // Start accessing the security-scoped resource
-                _ = url.startAccessingSecurityScopedResource()
-                folderURL = url
-                keptCount = 0
-                deletedCount = 0
-                loadMedia(from: url)
-            }
+        
+        let response = await panel.begin()
+        
+        // Start accessing the security-scoped resource
+        guard response == .OK, let url = panel.url else {
+            return
         }
+        
+        _ = url.startAccessingSecurityScopedResource()
+        folderURL = url
+        keptCount = 0
+        deletedCount = 0
+        currentIndex = 0
+        duplicateGroups = []
+        hideDuplicatesButton = true
+
+        self.mediaFiles = []
+        
+        let mediaFiles = await loadMedia(from: url)
+        self.mediaFiles = mediaFiles
+        findDuplicates(mediaFiles: mediaFiles)
     }
 
     private func selectKeepFolder() {
@@ -322,7 +368,7 @@ struct ContentView: View {
     }
 
     // MARK: - Load media
-    private func loadMedia(from folder: URL) {
+    private nonisolated func loadMedia(from folder: URL) async -> [URL] {
         let enumerator = FileManager.default.enumerator(
             at: folder,
             includingPropertiesForKeys: nil,
@@ -336,9 +382,7 @@ struct ContentView: View {
                 files.append(fileURL)
             }
         }
-        mediaFiles = files.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        findDuplicates(mediaFiles: mediaFiles)
-        currentIndex = 0
+        return files.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     // MARK: - Key handling
@@ -502,6 +546,8 @@ struct ContentView: View {
     
     private func filterFaceForAllImage() {
         Task {
+            numberOfFaceFilteredFiles = 0
+            numberOfFaceCheckedFiles = 0
             var found: [URL] = []
             for url in mediaFiles {
                 if await hasFace(in: url) {
@@ -511,7 +557,10 @@ struct ContentView: View {
                 numberOfFaceCheckedFiles += 1
             }
             
-            isFaceFiltering = false
+            isFaceFiltering = true
+            defer {
+                isFaceFiltering = false
+            }
             mediaFiles = found
         }
     }
