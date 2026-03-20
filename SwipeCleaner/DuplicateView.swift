@@ -27,16 +27,6 @@ struct DuplicateView: View {
                     .font(.title2).bold()
                 Spacer()
                 
-                Button(role: .destructive) {
-                    deleteAll()
-                } label: {
-                    Label("Delete All", systemImage: "trash")
-                        .font(.caption)
-                        .frame(width: 140)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                
                 Text("\(groups.count) group\(groups.count == 1 ? "" : "s")")
                     .foregroundColor(.secondary)
             }
@@ -65,17 +55,6 @@ struct DuplicateView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
-    }
-    
-    func deleteAll() {
-        for files in groups {
-            for file in files {
-                if !viewModel.deletedURLs.contains(file) {
-                    onDelete(file)
-                    viewModel.deletedURLs.insert(file)
-                }
-            }
-        }
     }
 }
 
