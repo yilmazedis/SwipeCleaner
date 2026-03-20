@@ -12,6 +12,14 @@ import AVKit
 @Observable
 final class DuplicateViewModel {
     @ObservationIgnored var deletedURLs: Set<URL> = []
+
+    // Precomputed so the List body never iterates all groups
+    func visibleGroups(from groups: [[URL]]) -> [(index: Int, files: [URL])] {
+        groups.enumerated().compactMap { (i, group) in
+            let visible = group.filter { !deletedURLs.contains($0) }
+            return visible.count > 1 ? (index: i, files: visible) : nil
+        }
+    }
 }
 
 struct DuplicateView: View {
@@ -20,27 +28,33 @@ struct DuplicateView: View {
 
     @State var viewModel = DuplicateViewModel()
 
+    // Derive once per render; @Observable invalidates this when deletedURLs changes
+    private var visibleGroups: [(index: Int, files: [URL])] {
+        viewModel.visibleGroups(from: groups)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            // Header
             HStack {
                 Text("Duplicate Files")
                     .font(.title2).bold()
                 Spacer()
-                
-                Text("\(groups.count) group\(groups.count == 1 ? "" : "s")")
+                Text("\(visibleGroups.count) group\(visibleGroups.count == 1 ? "" : "s")")
                     .foregroundColor(.secondary)
             }
             .padding()
             .background(Color(NSColor.controlBackgroundColor))
 
-            List {
-                ForEach(groups.indices, id: \.self) { index in
-                    let visibleFiles = groups[index].filter { !viewModel.deletedURLs.contains($0) }
-                    if visibleFiles.count > 1 {
-                        Section(header: Text("Group \(index + 1) — \(visibleFiles.count) copies")) {
+            // LazyVStack: only renders rows near the viewport
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
+                    ForEach(visibleGroups, id: \.index) { group in
+                        Section {
+                            // LazyHStack: only renders thumbnails near the horizontal viewport
                             ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 16) {
-                                    ForEach(visibleFiles, id: \.self) { url in
+                                LazyHStack(spacing: 16) {
+                                    ForEach(group.files, id: \.self) { url in
                                         DuplicateThumbnailView(url: url) {
                                             viewModel.deletedURLs.insert(url)
                                             onDelete(url)
@@ -48,7 +62,18 @@ struct DuplicateView: View {
                                     }
                                 }
                                 .padding(.vertical, 8)
+                                .padding(.horizontal, 16)
                             }
+                        } header: {
+                            HStack {
+                                Text("Group \(group.index + 1) — \(group.files.count) copies")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(Color(NSColor.controlBackgroundColor).opacity(0.95))
                         }
                     }
                 }

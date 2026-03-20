@@ -432,7 +432,7 @@ struct ContentView: View {
                             Button {
                                 viewModel.showingDuplicates.toggle()
                             } label: {
-                                Label("Find Duplicates", systemImage: "square.stack.3d.up")
+                                Label("Show Duplicates", systemImage: "square.stack.3d.up")
                             }
                             .buttonStyle(.borderedProminent)
                         }
