@@ -40,6 +40,9 @@ final class ContentViewModel {
         
         faceFilterFolderTask?.cancel()
         faceFilterFolderTask = nil
+        
+        duplicateTask?.cancel()
+        duplicateTask = nil
     }
     
     // MARK: - Helpers
