@@ -29,6 +29,7 @@ final class ContentViewModel {
     
     @ObservationIgnored private var loadingFolderTask: Task<Void, Error>?
     @ObservationIgnored private var faceFilterFolderTask: Task<Void, Error>?
+    @ObservationIgnored private var duplicateTask: Task<Void, Error>?
     
     private let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"]
     private let videoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
@@ -57,6 +58,7 @@ final class ContentViewModel {
 
     // MARK: - Folder selection
     func selectFolder() {
+        duplicateTask?.cancel()
         loadingFolderTask?.cancel()
         
         loadingFolderTask = Task {
@@ -86,11 +88,14 @@ final class ContentViewModel {
             mediaFiles = []
             
             let files = try await loadMedia(from: url)
-            let duplicates = try await findDuplicates(mediaFiles: files)
+            
+            duplicateTask = Task {
+                let duplicates = try await findDuplicates(mediaFiles: files)
+                duplicateGroups = duplicates
+                hideDuplicatesButton = duplicates.isEmpty
+            }
 
             mediaFiles = files
-            duplicateGroups = duplicates
-            hideDuplicatesButton = duplicates.isEmpty
             mediaFilesLoading = false
         }
     }
